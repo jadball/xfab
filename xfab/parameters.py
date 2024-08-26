@@ -24,15 +24,82 @@ Class to handle groups of parameters to be saved in and out
 of files and edited in guis with the fixed/varied info etc
 """
 
+
 from xfab import xfab_logging
+
 logger = xfab_logging.get_module_level_logger(__name__)
+
+
+class JsonPars:
+    """Class to handle new multiphase parameters that are stored in a json.
+    Should be extended in ImageD11 to give unitcell objects for each phase."""
+
+    def __init__(self, filename=None):
+        # the dictionary of everything we found from the json file
+        self.json_dict = {}
+
+        # a parameters object for the geometry
+        self.geometry_pars_obj = None
+
+        # a dict of parameters object for each phase
+        self.phase_pars_obj_dict = {}
+
+        if filename is not None:
+            self.load_json(filename)
+            self.get_pars_objects()
+
+    def get_pars_objects(self):
+        """Parses self.json_dict, reads the .par files, makes parameter objects for them"""
+        # get geometric parameters
+        geometry_dict = self.json_dict["geometry"]
+        geometry_file = geometry_dict["file"]
+        self.geometry_pars_obj = parameters()
+        self.geometry_pars_obj.loadparameters(geometry_file)
+
+        # get phase parameters from one of the phases
+        phases_dict = self.json_dict["phases"]
+        for phase_name, phase_entry in phases_dict.items():
+            phase_file = phase_entry["file"]
+            # read the phase pars from disk
+            phase_pars_obj = parameters()
+            phase_pars_obj.loadparameters(phase_file)
+            # put this pars object in self.phase_pars_obj_dict
+            self.phase_pars_obj_dict[phase_name] = phase_pars_obj
+
+    def get_any_phase_pars_obj(self):
+        """Returns any parameters object from self.phase_pars_obj_dict"""
+        return next(iter(self.phase_pars_obj_dict.values()))
+
+    @property
+    def xfab_pars_dict(self):
+        """Build a xfab pars compatible dictionary"""
+        # get geometry pars as a dict
+        geometry_pars_dict = self.geometry_pars_obj.get_parameters()
+        # get any phase pars as a dict
+        phase_pars_dict = self.get_any_phase_pars_obj().get_parameters()
+        # combine dicts together
+        pars_dict = phase_pars_dict.copy()
+        pars_dict.update(geometry_pars_dict)
+        return pars_dict
+
+    def load_json(self, filename):
+        """
+        Load json from file
+        """
+        import json
+        with open(filename, 'r') as json_string:
+            self.json_dict = json.load(json_string)
+
+
+
 
 class par:
     """
     Represents a thing which can vary
     """
-    def __init__(self, name, value, helpstring = None ,
-                 vary=False, can_vary=False , stepsize = None):
+
+    def __init__(self, name, value, helpstring=None,
+                 vary=False, can_vary=False, stepsize=None):
         """
         name : unique key used as keyword arg to some functions
         value : value of the parameter
@@ -44,13 +111,13 @@ class par:
         self.name = name
         self.value = value
         if helpstring is None:
-            self.helpstring = "parameter : "+name
+            self.helpstring = "parameter : " + name
         else:
             self.helpstring = helpstring
         self.vary = vary
         self.can_vary = can_vary
         self.stepsize = stepsize
-        
+
     def fromstringlist(self, sl):
         """ to send to Java """
         [self.name,
@@ -59,21 +126,23 @@ class par:
          self.vary,
          self.can_vary,
          self.stepsize] = sl
-        
+
     def tostringlist(self):
         """ to catch from Java """
-        return [self.name ,
-                self.value ,
-                self.helpstring ,
-                self.vary ,
+        return [self.name,
+                self.value,
+                self.helpstring,
+                self.vary,
                 self.can_vary,
-                self.stepsize ]
+                self.stepsize]
+
 
 class parameters:
     """
     Class to hold a set of named parameters
     """
-    def __init__(self,**kwds):
+
+    def __init__(self, **kwds):
         """
         name=value style arg list
         """
@@ -83,10 +152,10 @@ class parameters:
         self.variable_list = []
         self.stepsizes = {}
         self.par_objs = {}
-        for k,v in list(self.parameters.items()):
-            self.addpar(par(k,v))
-            
-    def addpar(self,par):
+        for k, v in list(self.parameters.items()):
+            self.addpar(par(k, v))
+
+    def addpar(self, par):
         """
         add a parameter object
         """
@@ -96,8 +165,8 @@ class parameters:
             self.varylist.append(par.name)
         if par.can_vary and par.name not in self.variable_list:
             self.variable_list.append(par.name)
-            self.stepsizes[par.name]=par.stepsize
-        self.par_objs[par.name]=par
+            self.stepsizes[par.name] = par.stepsize
+        self.par_objs[par.name] = par
 
     def get_variable_list(self):
         return self.variable_list
@@ -117,13 +186,13 @@ class parameters:
             assert v in self.variable_list
         self.varylist = vl
 
-    def set_variable_values(self,values):
+    def set_variable_values(self, values):
         """ set values of the parameters"""
-        assert len(values)==len(self.varylist)
-        for name, value in zip(self.varylist,values):
-            self.parameters[name]=value
+        assert len(values) == len(self.varylist)
+        for name, value in zip(self.varylist, values):
+            self.parameters[name] = value
 
-    def set_parameters(self,d):
+    def set_parameters(self, d):
         """
         Updates the values of parameters
         """
@@ -136,60 +205,66 @@ class parameters:
         """
         return self.parameters
 
-    def get(self,name):
+    def get(self, name):
         return self.parameters[name]
-    
-    def set(self,name,value):
+
+    def set(self, name, value):
         self.parameters[name] = value
 
-    def update_yourself(self,other):
+    def update_yourself(self, other):
         """
         Sychronise this parameter objects list of values with another object
         """
-        for k,v in list(self.parameters.items()):
-            if hasattr(other,k):
-                var = getattr(other,k)
-                logger.debug("setting: pars[%s] from %s to %s"%(k,v,var))
-                self.parameters[k]=var
+        for k, v in list(self.parameters.items()):
+            if hasattr(other, k):
+                var = getattr(other, k)
+                logger.debug("setting: pars[%s] from %s to %s" % (k, v, var))
+                self.parameters[k] = var
             else:
-                logger.debug("error: %s has no attribute %s, ignoring"%(other,k))
+                logger.debug("error: %s has no attribute %s, ignoring" % (other, k))
 
-    def update_other(self,other):
+    def update_other(self, other):
         """
         Synchronise an object with the values in this object
         """
-        for k,v in list(self.parameters.items()):
-            if hasattr(other,k):
-                var = getattr(other,k)
-                logger.debug("setting: %s.%s from %s to %s"%(other,k,var,v))
-                setattr(other,k,v)
+        for k, v in list(self.parameters.items()):
+            if hasattr(other, k):
+                var = getattr(other, k)
+                logger.debug("setting: %s.%s from %s to %s" % (other, k, var, v))
+                setattr(other, k, v)
             else:
-                logger.debug("error: %s has no attribute %s, ignoring"%
-                              (other,k))
+                logger.debug("error: %s has no attribute %s, ignoring" %
+                             (other, k))
 
-    def saveparameters(self,filename):
+    def saveparameters(self, filename):
         """
         Write parameters to a file
         """
-        f=open(filename,"w")
-        keys=list(self.parameters.keys())
+        f = open(filename, "w")
+        keys = list(self.parameters.keys())
         keys.sort()
         for key in keys:
-            f.write("%s %s\n"%(key,str(self.parameters[key])))
+            f.write("%s %s\n" % (key, str(self.parameters[key])))
         f.close()
 
-    def loadparameters(self,filename):
+    def loadparameters(self, filename):
         """
         Load parameters from a file
         """
-        lines = open(filename,"r").readlines()
-        for line in lines:
-            try:
-                [name, value] = line.split(" ") 
-                name=name.replace("-","_")
-                self.parameters[name]=value
-            except ValueError:
-                logger.error("Failed to read:%s"%(line))
+        # is it a json file?
+        if filename.endswith('json'):
+            # create a JsonPars object and get the pars dict from it
+            pars_dict = JsonPars(filename=filename).xfab_pars_dict
+            self.parameters.update(pars_dict)
+        else:
+            lines = open(filename, "r").readlines()
+            for line in lines:
+                try:
+                    [name, value] = line.split(" ")
+                    name = name.replace("-", "_")
+                    self.parameters[name] = value
+                except ValueError:
+                    logger.error("Failed to read:%s" % (line))
         self.dumbtypecheck()
 
     def dumbtypecheck(self):
@@ -213,7 +288,7 @@ class parameters:
                     # it really is a float
                     self.parameters[name] = vf
                     continue
-                    
+
                 # here if float and int worked
                 # should not be needed, depends on int valueerror
                 if abs(vi - vf) < 1e-9:
@@ -227,7 +302,8 @@ class parameters:
                 # int/float preserve type
                 self.parameters[name] = value
 
-def read_par_file( filename ):
+
+def read_par_file(filename):
     p = parameters()
-    p.loadparameters( filename )
+    p.loadparameters(filename)
     return p
